@@ -904,23 +904,29 @@
       await DB.put(DB.STORES.cigarettes, editing);
       toast('Cigarette updated');
     } else {
-      const enteredPrice = parseFloat(priceInput ? priceInput.value : '');
-      if (!Number.isFinite(enteredPrice) || enteredPrice <= 0) {
-        toast('Enter the cigarette price first');
-        if (priceInput) priceInput.focus();
-        return;
-      }
-      const rec = {
-        id: DB.uid(), brand_id, pack_id,
-        photo: resolvePhoto('cigarette', null),
-        price, date, time, notes,
-        created_at: Date.now(), updated_at: Date.now(),
-      };
-      await DB.put(DB.STORES.cigarettes, rec);
-      state.cigarettes.push(rec);
-      if (pack_id) await adjustPackRemaining(pack_id, -1);
-      toast('Cigarette saved');
-    }
+  const rec = {
+    id: DB.uid(),
+    brand_id,
+    pack_id,
+    photo: resolvePhoto('cigarette', null),
+    price,
+    date,
+    time,
+    notes,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  await DB.put(DB.STORES.cigarettes, rec);
+
+  state.cigarettes.push(rec);
+
+  if (pack_id) {
+    await adjustPackRemaining(pack_id, -1);
+  }
+
+  toast('Cigarette saved');
+}
     setLastBrand(brand_id);
     location.hash = '#/brand/' + brand_id;
   }
@@ -984,48 +990,105 @@
     };
   }
 
-  async function onSubmitPack(e, editing) {
-    e.preventDefault();
-    const f = e.target;
-    const brand_id = fv(f, 'brand_id');
-    const rawPackPrice = fv(f, 'pack_price').trim();
-    const pack_price = parseFloat(rawPackPrice);
-    if (!Number.isFinite(pack_price) || pack_price <= 0) {
-      toast('Enter the pack price first');
-      $('#pack-price')?.focus();
-      return;
-    }
-    const quantity = parseInt(fv(f, 'quantity'), 10) || 0;
-    const date = fv(f, 'date') || todayStr();
-    const time = fv(f, 'time') || nowTimeStr();
-    const notes = fv(f, 'notes').trim();
+async function onSubmitPack(e, editing) {
+  e.preventDefault();
 
-    if (editing) {
-      const prevUsed = Math.max(0, (Number(editing.quantity) || 0) - (Number(editing.remaining_quantity) || 0));
-      editing.brand_id = brand_id;
-      editing.photo = resolvePhoto('pack', editing);
-      editing.pack_price = pack_price;
-      editing.quantity = quantity;
-      editing.remaining_quantity = Math.max(0, Math.min(quantity, quantity - prevUsed));
-      editing.date = date; editing.time = time; editing.notes = notes;
-      editing.updated_at = Date.now();
-      await DB.put(DB.STORES.packs, editing);
-      toast('Pack updated');
-    } else {
-      const rec = {
-        id: DB.uid(), brand_id,
-        photo: resolvePhoto('pack', null),
-        pack_price, quantity, remaining_quantity: quantity,
-        date, time, notes,
-        created_at: Date.now(), updated_at: Date.now(),
-      };
-      await DB.put(DB.STORES.packs, rec);
-      state.packs.push(rec);
-      toast('Pack saved');
-    }
-    setLastBrand(brand_id);
-    location.hash = '#/brand/' + brand_id + '?tab=packs';
+  const f = e.target;
+
+  const brand_id = fv(f, 'brand_id');
+
+  const rawPackPrice = fv(f, 'pack_price').trim();
+  const pack_price = parseFloat(rawPackPrice);
+
+  if (!Number.isFinite(pack_price) || pack_price <= 0) {
+    toast('Enter the pack price first');
+    $('#pack-price')?.focus();
+    return;
   }
+
+  const quantity = parseInt(fv(f, 'quantity'), 10) || 0;
+  const date = fv(f, 'date') || todayStr();
+  const time = fv(f, 'time') || nowTimeStr();
+  const notes = fv(f, 'notes').trim();
+
+  if (quantity <= 0) {
+    toast('Enter the number of cigarettes');
+    return;
+  }
+
+  if (editing) {
+
+    const prevUsed = Math.max(
+      0,
+      (Number(editing.quantity) || 0) -
+      (Number(editing.remaining_quantity) || 0)
+    );
+
+    editing.brand_id = brand_id;
+    editing.photo = resolvePhoto('pack', editing);
+
+    // IMPORTANT:
+    // Supabase packs table uses "price"
+    editing.price = pack_price;
+
+    // Keep this for the frontend if your UI uses pack_price
+    editing.pack_price = pack_price;
+
+    editing.quantity = quantity;
+
+    editing.remaining_quantity = Math.max(
+      0,
+      Math.min(quantity, quantity - prevUsed)
+    );
+
+    editing.date = date;
+    editing.time = time;
+    editing.notes = notes;
+    editing.updated_at = Date.now();
+
+    await DB.put(DB.STORES.packs, editing);
+
+    toast('Pack updated');
+
+  } else {
+
+    const rec = {
+      id: DB.uid(),
+      brand_id,
+
+      photo: resolvePhoto('pack', null),
+
+      // Supabase column
+      price: pack_price,
+
+      // Frontend compatibility
+      pack_price: pack_price,
+
+      quantity: quantity,
+
+      // New pack starts completely full
+      remaining_quantity: quantity,
+
+      date,
+      time,
+      notes,
+
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+
+    await DB.put(DB.STORES.packs, rec);
+
+    state.packs.push(rec);
+
+    toast('Pack saved');
+  }
+
+  setLastBrand(brand_id);
+
+  location.hash =
+    '#/brand/' + brand_id + '?tab=packs';
+}
 
   /* ============================ Views: Add / Edit Brand ============================ */
   function viewAddBrand(params) {

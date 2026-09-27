@@ -1,90 +1,97 @@
-/* IndexedDB storage layer for Cig Diary */
+/* Supabase storage layer for Cig Diary */
 (function () {
   'use strict';
 
-  const DB_NAME = 'cig_diary';
-  const DB_VERSION = 1;
-  const STORES = { brands: 'brands', cigarettes: 'cigarettes', packs: 'packs' };
+  const STORES = {
+    brands: 'brands',
+    cigarettes: 'cigarettes',
+    packs: 'packs'
+  };
 
-  let dbPromise = null;
+  function client() {
+    if (!window.supabaseClient) {
+      throw new Error('Supabase client is not available.');
+    }
 
-  function open() {
-    if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve, reject) => {
-      if (!('indexedDB' in window)) {
-        reject(new Error('IndexedDB is not supported in this browser.'));
-        return;
-      }
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = (event) => {
-        const db = event.target.result;
-
-        if (!db.objectStoreNames.contains(STORES.brands)) {
-          db.createObjectStore(STORES.brands, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.cigarettes)) {
-          const s = db.createObjectStore(STORES.cigarettes, { keyPath: 'id' });
-          s.createIndex('brand_id', 'brand_id');
-          s.createIndex('date', 'date');
-        }
-        if (!db.objectStoreNames.contains(STORES.packs)) {
-          const s = db.createObjectStore(STORES.packs, { keyPath: 'id' });
-          s.createIndex('brand_id', 'brand_id');
-          s.createIndex('date', 'date');
-        }
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    return dbPromise;
+    return window.supabaseClient;
   }
 
-  function run(storeName, mode, fn) {
-    return open().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, mode);
-      const store = tx.objectStore(storeName);
-      let request;
-      try {
-        request = fn(store);
-      } catch (err) {
-        reject(err);
-        return;
-      }
-      tx.oncomplete = () => resolve(request ? request.result : undefined);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    }));
+  function checkError(result) {
+    if (result.error) {
+      console.error('Supabase error:', result.error);
+      throw result.error;
+    }
+
+    return result.data;
   }
 
   const DB = {
     STORES,
+
     uid() {
-      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9);
+      return Date.now().toString(36) + '-' +
+        Math.random().toString(36).slice(2, 9);
     },
-    all(store) {
-      return run(store, 'readonly', (s) => s.getAll());
+
+    async all(store) {
+      const result = await client()
+        .from(store)
+        .select('*');
+
+      return checkError(result) || [];
     },
-    get(store, id) {
-      return run(store, 'readonly', (s) => s.get(id));
+
+    async get(store, id) {
+      const result = await client()
+        .from(store)
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      return checkError(result);
     },
-    put(store, value) {
-      return run(store, 'readwrite', (s) => s.put(value));
+
+    async put(store, value) {
+      const result = await client()
+        .from(store)
+        .upsert(value, { onConflict: 'id' })
+        .select()
+        .single();
+
+      return checkError(result);
     },
-    remove(store, id) {
-      return run(store, 'readwrite', (s) => s.delete(id));
+
+    async remove(store, id) {
+      const result = await client()
+        .from(store)
+        .delete()
+        .eq('id', id);
+
+      checkError(result);
+      return true;
     },
-    clear(store) {
-      return run(store, 'readwrite', (s) => s.clear());
+
+    async clear(store) {
+      const result = await client()
+        .from(store)
+        .delete()
+        .neq('id', '');
+
+      checkError(result);
+      return true;
     },
-    bulkPut(store, values) {
-      return open().then((db) => new Promise((resolve, reject) => {
-        const tx = db.transaction(store, 'readwrite');
-        const os = tx.objectStore(store);
-        values.forEach((v) => os.put(v));
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-      }));
-    },
+
+    async bulkPut(store, values) {
+      if (!Array.isArray(values) || values.length === 0) {
+        return;
+      }
+
+      const result = await client()
+        .from(store)
+        .upsert(values, { onConflict: 'id' });
+
+      checkError(result);
+    }
   };
 
   window.DB = DB;

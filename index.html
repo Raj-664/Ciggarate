@@ -7,6 +7,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Cig Diary</title>
+
+   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
@@ -66,11 +69,15 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="js/db.js"></script>
+  <script src="js/supabase.js"></script>
   <script src="js/app.js"></script>
-  <script>
+
+<script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+        window.addEventListener('load', () => {
+            // your existing service worker code
+        });
     }
-  </script>
+</script>
 </body>
 </html>
