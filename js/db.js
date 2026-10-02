@@ -5,7 +5,8 @@
   const STORES = {
     brands: 'brands',
     cigarettes: 'cigarettes',
-    packs: 'packs'
+    packs: 'packs',
+    loose_purchases: 'loose_purchases'
   };
 
   function client() {

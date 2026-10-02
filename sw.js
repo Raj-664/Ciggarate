@@ -1,10 +1,11 @@
 /* Cig Diary service worker - offline app shell */
-const CACHE = 'cig-diary-luxury-v4';
+const CACHE = 'cig-diary-luxury-v5';
 const ASSETS = [
   './',
   './index.html',
   './css/styles.css',
   './js/db.js',
+  './js/supabase.js',
   './js/app.js',
   './manifest.webmanifest',
 ];

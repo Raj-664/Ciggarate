@@ -1145,3 +1145,20 @@ body::before {
 .quick-manual-price label { color: #e3c38b; font-weight: 700; }
 .quick-manual-price .input { font-size: 17px; font-weight: 700; }
 .brand-price { display:none !important; }
+
+
+/* ---------- Loose cigarette purchases ---------- */
+.tag-loose {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 8px;
+  font-size: 10px; font-weight: 700; background: rgba(200,169,106,.14); color: var(--accent-2);
+  vertical-align: middle;
+}
+.loose-thumb {
+  color: var(--accent-2);
+  background: linear-gradient(145deg, rgba(200,169,106,.14), rgba(41,37,29,.9));
+  border: 1px solid rgba(200,169,106,.18);
+}
+.loose-record .record-price { color: var(--accent-2); }
+@media (max-width: 420px) {
+  .action-row { grid-template-columns: 1fr; }
+}

@@ -68,14 +68,16 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="js/db.js"></script>
   <script src="js/supabase.js"></script>
+  <script src="js/db.js"></script>
   <script src="js/app.js"></script>
 
 <script>
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-            // your existing service worker code
+            navigator.serviceWorker.register('./sw.js').catch((err) => {
+                console.warn('Service worker registration failed:', err);
+            });
         });
     }
 </script>

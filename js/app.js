@@ -7,6 +7,7 @@
     brands: [],
     cigarettes: [],
     packs: [],
+    loosePurchases: [],
     calMonth: null,
     calSelected: null,
     brandTab: 'cigarettes',
@@ -185,14 +186,16 @@
   ];
 
   async function loadData() {
-    const [brands, cigarettes, packs] = await Promise.all([
+    const [brands, cigarettes, packs, loosePurchases] = await Promise.all([
       DB.all(DB.STORES.brands),
       DB.all(DB.STORES.cigarettes),
       DB.all(DB.STORES.packs),
+      DB.all(DB.STORES.loose_purchases),
     ]);
     state.brands = brands.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
     state.cigarettes = cigarettes;
     state.packs = packs;
+    state.loosePurchases = loosePurchases;
     state.packs.forEach((p) => {
       if (p.remaining_quantity == null) p.remaining_quantity = Number(p.quantity) || 0;
     });
@@ -219,6 +222,7 @@
   function brandById(id) { return state.brands.find((b) => b.id === id) || null; }
   function cigsForBrand(id) { return state.cigarettes.filter((c) => c.brand_id === id); }
   function packsForBrand(id) { return state.packs.filter((p) => p.brand_id === id); }
+  function looseForBrand(id) { return state.loosePurchases.filter((p) => p.brand_id === id); }
   function parseTime(t) {
     if (!t) return 0;
     const p = String(t).split(':');
@@ -229,20 +233,25 @@
   function brandStats(brand) {
     const cigs = cigsForBrand(brand.id);
     const packs = packsForBrand(brand.id);
+    const loose = looseForBrand(brand.id);
     const packQty = packs.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
     const remaining = packs.reduce((s, p) => s + (Number(p.remaining_quantity) || 0), 0);
     const cigSpend = cigs.reduce((s, c) => s + (Number(c.price) || 0), 0);
-    const packSpend = packs.reduce((s, p) => s + (Number(p.pack_price) || 0), 0);
+    const packSpend = packs.reduce((s, p) => s + (Number(p.pack_price != null ? p.pack_price : p.price) || 0), 0);
+    const looseSpend = loose.reduce((s, p) => s + (Number(p.total_price) || 0), 0);
     let last = 0;
     cigs.forEach((c) => { const t = recordStamp(c); if (t > last) last = t; });
     packs.forEach((p) => { const t = recordStamp(p); if (t > last) last = t; });
+    loose.forEach((p) => { const t = recordStamp(p); if (t > last) last = t; });
     return {
       cigCount: cigs.length,
       packCount: packs.length,
+      looseCount: loose.length,
+      looseQty: loose.reduce((s, p) => s + (Number(p.quantity) || 0), 0),
       packQty,
       remaining,
-      totalUnits: cigs.length + packQty,
-      spent: cigSpend + packSpend,
+      totalUnits: cigs.length,
+      spent: cigSpend + packSpend + looseSpend,
       avgPrice: cigs.length ? cigSpend / cigs.length : null,
       last: last || null,
     };
@@ -269,16 +278,16 @@
       .reduce((s, c) => s + (Number(c.price) || 0), 0);
     const packs = state.packs
       .filter((p) => inRange(p.date, range))
-      .reduce((s, p) => s + (Number(p.pack_price) || 0), 0);
-    return cig + packs;
+      .reduce((s, p) => s + (Number(p.pack_price != null ? p.pack_price : p.price) || 0), 0);
+    const loose = state.loosePurchases
+      .filter((p) => inRange(p.date, range))
+      .reduce((s, p) => s + (Number(p.total_price) || 0), 0);
+    return cig + packs + loose;
   }
   function rangeCigarettes(range) {
-    const cigs = state.cigarettes.filter((c) => inRange(c.date, range)).length;
-    const packs = state.packs
-      .filter((p) => inRange(p.date, range))
-      .reduce((s, p) => s + (Number(p.quantity) || 0), 0);
-    return cigs + packs;
+    return state.cigarettes.filter((c) => inRange(c.date, range)).length;
   }
+
   function weekRange() {
     const d = new Date(); d.setHours(0, 0, 0, 0);
     const day = (d.getDay() + 6) % 7;
@@ -308,17 +317,19 @@
     const week = weekRange();
     const month = monthRange();
     const year = yearRange();
-
     const todayRange = [today, today];
 
     const packQty = state.packs.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
-    const totalCigs = state.cigarettes.length + packQty;
-
+    const looseQty = state.loosePurchases.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+    const totalConsumed = state.cigarettes.length;
     const cigSpend = state.cigarettes.reduce((s, c) => s + (Number(c.price) || 0), 0);
-    const packSpend = state.packs.reduce((s, p) => s + (Number(p.pack_price) || 0), 0);
-    const totalSpent = cigSpend + packSpend;
+    const packSpend = state.packs.reduce((s, p) => s + (Number(p.pack_price != null ? p.pack_price : p.price) || 0), 0);
+    const looseSpend = state.loosePurchases.reduce((s, p) => s + (Number(p.total_price) || 0), 0);
+    const totalSpent = cigSpend + packSpend + looseSpend;
 
-    const allDates = state.cigarettes.map((c) => c.date).concat(state.packs.map((p) => p.date));
+    const allDates = state.cigarettes.map((c) => c.date)
+      .concat(state.packs.map((p) => p.date))
+      .concat(state.loosePurchases.map((p) => p.date));
     let span = 1;
     if (allDates.length) {
       allDates.sort();
@@ -334,11 +345,17 @@
       monthSpend: rangeSpend(month),
       yearCigs: rangeCigarettes(year),
       yearSpend: rangeSpend(year),
-      totalCigsTotal: totalCigs,
-      totalIndividual: state.cigarettes.length,
+      totalCigsTotal: totalConsumed,
+      totalIndividual: totalConsumed,
       totalPacks: state.packs.length,
+      totalLoosePurchases: state.loosePurchases.length,
+      purchasedPackCigs: packQty,
+      purchasedLooseCigs: looseQty,
       totalSpent,
-      avgCigs: totalCigs / span,
+      cigSpend,
+      packSpend,
+      looseSpend,
+      avgCigs: totalConsumed / span,
       avgSpend: totalSpent / span,
       span,
     };
@@ -349,6 +366,7 @@
     const set = new Set();
     state.cigarettes.forEach((c) => set.add(c.date));
     state.packs.forEach((p) => set.add(p.date));
+    state.loosePurchases.forEach((p) => set.add(p.date));
     return set;
   }
 
@@ -522,6 +540,26 @@
       '</div>';
   }
 
+  function looseRowHTML(p, brandName, opts) {
+    opts = opts || {};
+    const unit = Number(p.price_per_cigarette) || 0;
+    const qty = Number(p.quantity) || 0;
+    return '' +
+      '<div class="record loose-record">' +
+        '<div class="record-thumb loose-thumb">LOOSE</div>' +
+        '<div class="record-main">' +
+          '<div class="record-title">' + esc(opts.showBrand ? (brandName || 'Loose Purchase') : 'Loose Purchase') + '<span class="tag-loose">' + qty + ' sticks</span></div>' +
+          '<div class="record-sub">' + formatDate(p.date) + ' &mdash; ' + formatTime(p.time) + ' &bull; ' + money(unit) + '/cig</div>' +
+          (p.notes ? '<div class="record-note">' + esc(p.notes) + '</div>' : '') +
+        '</div>' +
+        '<div class="record-price">' + money(p.total_price) + '</div>' +
+        '<div class="record-actions">' +
+          '<button class="edit-btn" data-edit-loose="' + p.id + '" aria-label="Edit">&#9998;</button>' +
+          '<button class="del-btn" data-del-loose="' + p.id + '" aria-label="Delete">&#10005;</button>' +
+        '</div>' +
+      '</div>';
+  }
+
   function emptyState(title, text) {
     return '<div class="empty"><div class="big">&#128683;</div><h3>' + esc(title) + '</h3><p>' + esc(text) + '</p></div>';
   }
@@ -545,6 +583,7 @@
       case 'brand': view = viewBrand(route.parts[1], route.params.tab); break;
       case 'add-cigarette': view = viewAddCigarette(route.params); break;
       case 'add-pack': view = viewAddPack(route.params); break;
+      case 'add-loose': view = viewAddLoose(route.params); break;
       case 'add-brand': view = viewAddBrand(route.params); break;
       case 'quick-add': view = viewQuickAdd(); break;
       case 'search': view = viewSearch(); break;
@@ -666,7 +705,7 @@
     if (!brand) {
       return { title: 'Not found', html: emptyState('Brand not found', 'It may have been removed.'), showBack: true, showFab: false };
     }
-    if (tab && ['cigarettes', 'packs', 'summary'].indexOf(tab) >= 0) state.brandTab = tab;
+    if (tab && ['cigarettes', 'packs', 'loose', 'summary'].indexOf(tab) >= 0) state.brandTab = tab;
     const activeTab = state.brandTab || 'cigarettes';
     const s = brandStats(brand);
 
@@ -682,18 +721,21 @@
           '<div class="row">' + (brand.pack_price != null ? money(brand.pack_price) + ' / pack' : 'No pack price set') + '</div>' +
           '<div class="row">' + (brand.sticks_per_pack ? brand.sticks_per_pack + ' cigarettes / pack' : 'Sticks per pack not set') + '</div>' +
           (brand.description ? '<div class="row">' + esc(brand.description) + '</div>' : '') +
-          '<span class="pill">' + s.cigCount + ' cigarettes</span>' +
+          '<span class="pill">' + s.cigCount + ' consumed</span>' +
           '<span class="pill">' + s.packCount + ' packs</span>' +
+          '<span class="pill">' + s.looseCount + ' loose purchases</span>' +
           '<span class="pill">' + money(s.spent) + ' spent</span>' +
         '</div>' +
       '</div>' +
       '<div class="action-row">' +
         '<button class="btn btn-primary" data-add-cig="' + brand.id + '">+ Add Cigarette</button>' +
         '<button class="btn btn-secondary" data-add-pack="' + brand.id + '">+ Add Pack</button>' +
+        '<button class="btn btn-secondary" data-add-loose="' + brand.id + '">+ Loose Cigarettes</button>' +
       '</div>' +
       '<div class="tabs" id="brand-tabs">' +
         tabBtn('cigarettes', 'Cigarettes', activeTab) +
         tabBtn('packs', 'Packs', activeTab) +
+        tabBtn('loose', 'Loose', activeTab) +
         tabBtn('summary', 'Summary', activeTab) +
       '</div>' +
       '<div id="tab-content">' + brandTabHTML(brand, activeTab) + '</div>';
@@ -735,6 +777,16 @@
         packs.map((p) => packRowHTML(p, brand.name, { showInventory: true })).join('');
     }
 
+    if (tab === 'loose') {
+      const loose = looseForBrand(brand.id).sort((a, b) => recordStamp(b) - recordStamp(a));
+      if (!loose.length) return emptyState('No loose purchases yet', 'Buy 2 or more individual cigarettes without a whole pack.');
+      const qty = loose.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+      const spend = loose.reduce((s, p) => s + (Number(p.total_price) || 0), 0);
+      return '<div class="panel" style="margin-top:12px"><h3>Loose Purchase Summary</h3>' +
+        '<p class="panel-sub">' + qty + ' cigarettes purchased loosely &bull; ' + money(spend) + ' spent</p></div>' +
+        loose.map((p) => looseRowHTML(p, brand.name, { showBrand: false })).join('');
+    }
+
     if (tab === 'summary') {
       const s = brandStats(brand);
       const last7 = [];
@@ -751,8 +803,9 @@
 
       return '' +
         '<div class="stat-grid" style="margin-top:12px">' +
-          statCard('Cigarettes', s.cigCount, 'individual', 'accent') +
-          statCard('Packs', s.packCount, 'recorded', '') +
+          statCard('Consumed', s.cigCount, 'individual', 'accent') +
+          statCard('Packs', s.packCount, 'purchases', '') +
+          statCard('Loose', s.looseCount, 'purchase records', '') +
           statCard('Total spent', money(s.spent), 'all time', 'green') +
           statCard('Remaining', s.remaining, 'in packs', '') +
         '</div>' +
@@ -1090,6 +1143,114 @@ async function onSubmitPack(e, editing) {
     '#/brand/' + brand_id + '?tab=packs';
 }
 
+  /* ============================ Views: Add / Edit Loose Purchase ============================ */
+  function viewAddLoose(params) {
+    if (!state.brands.length) {
+      return { title: 'Loose Purchase', html: emptyState('No brands yet', 'Create a brand first.'), showBack: true, showFab: false };
+    }
+    const editing = params.edit ? state.loosePurchases.find((p) => p.id === params.edit) : null;
+    const selected = (editing && editing.brand_id) || params.brand || lastBrandId() || state.brands[0].id;
+    const brand = brandById(selected) || state.brands[0];
+    const options = state.brands.map((b) => '<option value="' + b.id + '"' + (b.id === brand.id ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('');
+    const qty = editing ? editing.quantity : 2;
+    const unit = editing ? editing.price_per_cigarette : (brand.default_price != null ? brand.default_price : settings.default_price);
+    const html = '' +
+      '<form class="form" id="loose-form">' +
+        '<div class="panel" style="margin:0"><h3>Loose Cigarette Purchase</h3><p class="panel-sub">Buy individual cigarettes without recording a whole packet. This is a purchase record, not a consumption record.</p></div>' +
+        '<div class="field"><label>Brand</label><select class="select" name="brand_id" id="loose-brand">' + options + '</select></div>' +
+        '<div class="grid-2">' +
+          '<div class="field"><label>Quantity</label><input class="input" type="number" min="1" step="1" name="quantity" id="loose-qty" value="' + esc(qty) + '" required /></div>' +
+          '<div class="field"><label>Price per cigarette (' + settings.currency + ')</label><input class="input" type="number" min="0.01" step="0.01" name="price_per_cigarette" id="loose-unit" value="' + esc(unit) + '" required /></div>' +
+        '</div>' +
+        '<div class="percig-box" id="loose-total">Total: ' + money((Number(qty) || 0) * (Number(unit) || 0)) + '</div>' +
+        '<div class="grid-2">' +
+          '<div class="field"><label>Date</label><input class="input" type="date" name="date" value="' + esc(editing ? editing.date : todayStr()) + '" /></div>' +
+          '<div class="field"><label>Time</label><input class="input" type="time" name="time" value="' + esc(editing ? editing.time : nowTimeStr()) + '" /></div>' +
+        '</div>' +
+        '<div class="field"><label>Notes <span class="hint">(optional)</span></label><textarea class="textarea" name="notes" placeholder="e.g. Bought 3 from local shop">' + esc(editing ? editing.notes : '') + '</textarea></div>' +
+        '<button class="btn btn-primary btn-block" type="submit">' + (editing ? 'Update Loose Purchase' : 'Save Loose Purchase') + '</button>' +
+      '</form>';
+    return {
+      title: editing ? 'Edit Loose Purchase' : 'Loose Cigarettes',
+      subtitle: 'Record individual cigarette purchases',
+      html, showBack: true, showFab: false,
+      init: () => {
+        const updateTotal = () => {
+          const q = Number($('#loose-qty').value) || 0;
+          const u = Number($('#loose-unit').value) || 0;
+          $('#loose-total').innerHTML = 'Total: <b>' + money(q * u) + '</b> &bull; ' + q + ' cigarettes';
+        };
+        $('#loose-brand').addEventListener('change', (e) => {
+          if (!editing) {
+            const b = brandById(e.target.value);
+            if (b && b.default_price != null) $('#loose-unit').value = b.default_price;
+            updateTotal();
+          }
+        });
+        $('#loose-qty').addEventListener('input', updateTotal);
+        $('#loose-unit').addEventListener('input', updateTotal);
+        updateTotal();
+        $('#loose-form').addEventListener('submit', (e) => onSubmitLoose(e, editing));
+      },
+    };
+  }
+
+  async function onSubmitLoose(e, editing) {
+    e.preventDefault();
+    const f = e.target;
+    const submitBtn = f.querySelector('button[type="submit"]');
+    const originalText = submitBtn ? submitBtn.textContent : '';
+
+    try {
+      const brand_id = fv(f, 'brand_id');
+      const quantity = parseInt(fv(f, 'quantity'), 10);
+      const price_per_cigarette = parseFloat(fv(f, 'price_per_cigarette'));
+
+      if (!brand_id || !brandById(brand_id)) return toast('Select a valid brand');
+      if (!Number.isInteger(quantity) || quantity < 1) return toast('Enter a valid quantity');
+      if (!Number.isFinite(price_per_cigarette) || price_per_cigarette <= 0) return toast('Enter a valid price per cigarette');
+
+      const rec = editing
+        ? Object.assign({}, editing)
+        : { id: DB.uid(), created_at: Date.now() };
+
+      rec.brand_id = brand_id;
+      rec.quantity = quantity;
+      rec.price_per_cigarette = round2(price_per_cigarette);
+      rec.total_price = round2(quantity * price_per_cigarette);
+      rec.date = fv(f, 'date') || todayStr();
+      rec.time = fv(f, 'time') || nowTimeStr();
+      rec.notes = fv(f, 'notes').trim();
+      rec.updated_at = Date.now();
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = editing ? 'Updating...' : 'Saving...';
+      }
+
+      await DB.put(DB.STORES.loose_purchases, rec);
+
+      const i = state.loosePurchases.findIndex((x) => x.id === rec.id);
+      if (i >= 0) state.loosePurchases[i] = rec;
+      else state.loosePurchases.push(rec);
+
+      setLastBrand(brand_id);
+      toast(editing ? 'Loose purchase updated' : 'Loose purchase saved');
+      location.hash = '#/brand/' + brand_id + '?tab=loose';
+    } catch (err) {
+      console.error('Loose purchase save failed:', err);
+      const message = err && (err.message || err.details || err.hint)
+        ? (err.message || err.details || err.hint)
+        : 'Could not save loose purchase';
+      toast('Save failed: ' + message);
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalText;
+      }
+    }
+  }
+
   /* ============================ Views: Add / Edit Brand ============================ */
   function viewAddBrand(params) {
     const editing = params.edit ? brandById(params.edit) : null;
@@ -1157,6 +1318,7 @@ async function onSubmitPack(e, editing) {
     if (!ok) return;
     for (const c of cigsForBrand(id)) await DB.remove(DB.STORES.cigarettes, c.id);
     for (const p of packsForBrand(id)) await DB.remove(DB.STORES.packs, p.id);
+    for (const p of looseForBrand(id)) await DB.remove(DB.STORES.loose_purchases, p.id);
     await DB.remove(DB.STORES.brands, id);
     await loadData();
     toast('Brand deleted');
@@ -1216,6 +1378,14 @@ function viewQuickAdd() {
       '<button class="btn btn-primary btn-block quick-save" id="quick-save">' +
         'Save Cigarette' +
       '</button>' +
+
+      '<div class="panel quick-loose-section" style="margin:12px 0 16px">' +
+        '<h3>🛒 Loose Cigarette Purchase</h3>' +
+        '<p class="panel-sub">Buy 2 or more individual cigarettes without a whole pack.</p>' +
+        '<button class="btn btn-secondary btn-block" type="button" data-go="#/add-loose">' +
+          'Add Loose Purchase' +
+        '</button>' +
+      '</div>' +
 
       '<details class="quick-more">' +
         '<summary>Add details (photo, note, time)</summary>' +
@@ -1369,7 +1539,7 @@ function viewQuickAdd() {
     const out = [];
 
     state.cigarettes.forEach((c) => {
-      if (s.type === 'packs') return;
+      if (s.type === 'packs' || s.type === 'loose') return;
       if (s.brand !== 'all' && c.brand_id !== s.brand) return;
       if (!inRange(c.date, range)) return;
       const brand = brandById(c.brand_id);
@@ -1379,13 +1549,23 @@ function viewQuickAdd() {
     });
 
     state.packs.forEach((p) => {
-      if (s.type === 'cigarettes') return;
+      if (s.type === 'cigarettes' || s.type === 'loose') return;
       if (s.brand !== 'all' && p.brand_id !== s.brand) return;
       if (!inRange(p.date, range)) return;
       const brand = brandById(p.brand_id);
       const hay = ((brand ? brand.name : '') + ' ' + (p.notes || '') + ' ' + p.date + ' ' + formatDate(p.date)).toLowerCase();
       if (q && hay.indexOf(q) === -1) return;
       out.push({ kind: 'pack', rec: p, brand });
+    });
+
+    state.loosePurchases.forEach((p) => {
+      if (s.type === 'cigarettes' || s.type === 'packs') return;
+      if (s.brand !== 'all' && p.brand_id !== s.brand) return;
+      if (!inRange(p.date, range)) return;
+      const brand = brandById(p.brand_id);
+      const hay = ((brand ? brand.name : '') + ' ' + (p.notes || '') + ' ' + p.date + ' ' + formatDate(p.date)).toLowerCase();
+      if (q && hay.indexOf(q) === -1) return;
+      out.push({ kind: 'loose', rec: p, brand });
     });
 
     out.sort((a, b) => recordStamp(b.rec) - recordStamp(a.rec));
@@ -1396,12 +1576,14 @@ function viewQuickAdd() {
     const rows = searchResults();
     if (!rows.length) return '<div class="empty" style="padding:30px 20px"><h3>No matching records</h3><p>Try a different search or filter.</p></div>';
     const cigCount = rows.filter((r) => r.kind === 'cig').length;
-    const packCount = rows.length - cigCount;
-    const totalSpend = rows.reduce((s, r) => s + (r.kind === 'cig' ? Number(r.rec.price) : Number(r.rec.pack_price)) || 0, 0);
-    const summary = '<p class="panel-sub" style="margin:2px 4px 12px">' + rows.length + ' results \u2022 ' + cigCount + ' cigarettes \u2022 ' + packCount + ' packs \u2022 ' + money(totalSpend) + '</p>';
+    const packCount = rows.filter((r) => r.kind === 'pack').length;
+    const looseCount = rows.filter((r) => r.kind === 'loose').length;
+    const totalSpend = rows.reduce((s, r) => s + (r.kind === 'cig' ? Number(r.rec.price) : r.kind === 'pack' ? Number(r.rec.pack_price != null ? r.rec.pack_price : r.rec.price) : Number(r.rec.total_price)) || 0, 0);
+    const summary = '<p class="panel-sub" style="margin:2px 4px 12px">' + rows.length + ' results &bull; ' + cigCount + ' consumed &bull; ' + packCount + ' packs &bull; ' + looseCount + ' loose purchases &bull; ' + money(totalSpend) + '</p>';
     return summary + rows.map((r) => r.kind === 'cig'
       ? cigRowHTML(r.rec, r.brand ? r.brand.name : '', { showBrand: true })
-      : packRowHTML(r.rec, r.brand ? r.brand.name : '', { showBrand: true })).join('');
+      : r.kind === 'pack' ? packRowHTML(r.rec, r.brand ? r.brand.name : '', { showBrand: true })
+      : looseRowHTML(r.rec, r.brand ? r.brand.name : '', { showBrand: true })).join('');
   }
 
   function viewSearch() {
@@ -1428,6 +1610,7 @@ function viewQuickAdd() {
             '<option value="all"' + (s.type === 'all' ? ' selected' : '') + '>All records</option>' +
             '<option value="cigarettes"' + (s.type === 'cigarettes' ? ' selected' : '') + '>Cigarettes</option>' +
             '<option value="packs"' + (s.type === 'packs' ? ' selected' : '') + '>Packs</option>' +
+            '<option value="loose"' + (s.type === 'loose' ? ' selected' : '') + '>Loose Purchases</option>' +
           '</select></div>' +
           '<div class="field"><label>Brand</label><select class="select" id="search-brand">' + brandOptions + '</select></div>' +
         '</div>' +
@@ -1478,7 +1661,7 @@ function viewQuickAdd() {
       subtitle: 'Automatic spending & cigarette insights',
       html: '' +
         '<div class="analytics-hero">' +
-          '<div><span class="eyebrow">TOTAL SPENT</span><strong>' + money(g.totalSpent) + '</strong><p>All recorded cigarettes + packs</p></div>' +
+          '<div><span class="eyebrow">TOTAL SPENT</span><strong>' + money(g.totalSpent) + '</strong><p>All cigarette, pack and loose-purchase spending</p></div>' +
           '<div class="analytics-hero-mark">₹</div>' +
         '</div>' +
 
@@ -1566,7 +1749,8 @@ function viewQuickAdd() {
       const key = d.getFullYear() + '-' + pad(d.getMonth() + 1);
       let val = 0;
       state.cigarettes.forEach((c) => { if (c.date.indexOf(key) === 0) val += Number(c.price) || 0; });
-      state.packs.forEach((p) => { if (p.date.indexOf(key) === 0) val += Number(p.pack_price) || 0; });
+      state.packs.forEach((p) => { if (p.date.indexOf(key) === 0) val += Number(p.pack_price != null ? p.pack_price : p.price) || 0; });
+      state.loosePurchases.forEach((p) => { if (p.date.indexOf(key) === 0) val += Number(p.total_price) || 0; });
       months.push({ label: MONTHS[d.getMonth()], val });
     }
     const max = Math.max(1, ...months.map((x) => x.val));
@@ -1584,7 +1768,8 @@ function viewQuickAdd() {
     const key = y + '-' + pad(m + 1);
     const cigs = state.cigarettes.filter((c) => c.date.indexOf(key) === 0);
     const packs = state.packs.filter((p) => p.date.indexOf(key) === 0);
-    const spent = cigs.reduce((s, c) => s + (Number(c.price) || 0), 0) + packs.reduce((s, p) => s + (Number(p.pack_price) || 0), 0);
+    const loose = state.loosePurchases.filter((p) => p.date.indexOf(key) === 0);
+    const spent = cigs.reduce((s, c) => s + (Number(c.price) || 0), 0) + packs.reduce((s, p) => s + (Number(p.pack_price != null ? p.pack_price : p.price) || 0), 0) + loose.reduce((s, p) => s + (Number(p.total_price) || 0), 0);
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     const activeDays = new Set(cigs.map((c) => c.date)).size;
     const avgCigs = cigs.length / daysInMonth;
@@ -1602,7 +1787,13 @@ function viewQuickAdd() {
       const b = brandById(p.brand_id);
       const k = b ? b.name : 'Unknown';
       brandMap[k] = brandMap[k] || { cigs: 0, spent: 0 };
-      brandMap[k].spent += Number(p.pack_price) || 0;
+      brandMap[k].spent += Number(p.pack_price != null ? p.pack_price : p.price) || 0;
+    });
+    loose.forEach((p) => {
+      const b = brandById(p.brand_id);
+      const k = b ? b.name : 'Unknown';
+      brandMap[k] = brandMap[k] || { cigs: 0, spent: 0 };
+      brandMap[k].spent += Number(p.total_price) || 0;
     });
     const brandRows = Object.keys(brandMap).sort((a, b) => brandMap[b].cigs - brandMap[a].cigs);
     const maxC = Math.max(1, ...brandRows.map((k) => brandMap[k].cigs));
@@ -1619,6 +1810,7 @@ function viewQuickAdd() {
         '<div class="stat-grid">' +
           statCard('Cigarettes', cigs.length, 'this month', 'accent') +
           statCard('Packs', packs.length, 'this month', '') +
+          statCard('Loose', loose.length, 'purchase records', '') +
           statCard('Spending', money(spent), 'this month', 'green') +
           statCard('Active days', activeDays, 'of ' + daysInMonth, '') +
         '</div>' +
@@ -1852,8 +2044,8 @@ function viewQuickAdd() {
 
   function exportJSON() {
     const payload = {
-      app: 'cig-diary', version: 2, exported_at: new Date().toISOString(),
-      brands: state.brands, cigarettes: state.cigarettes, packs: state.packs, settings,
+      app: 'cig-diary', version: 3, exported_at: new Date().toISOString(),
+      brands: state.brands, cigarettes: state.cigarettes, packs: state.packs, loose_purchases: state.loosePurchases, settings,
     };
     download('cig-diary-backup-' + todayStr() + '.json', JSON.stringify(payload, null, 2), 'application/json');
     toast('JSON exported');
@@ -1872,7 +2064,11 @@ function viewQuickAdd() {
     });
     state.packs.forEach((p) => {
       const b = brandById(p.brand_id);
-      lines.push(['pack', p.date, p.time || '', b ? b.name : '', p.pack_price, p.quantity, p.remaining_quantity, p.notes || ''].map(csvCell).join(','));
+      lines.push(['pack', p.date, p.time || '', b ? b.name : '', p.pack_price != null ? p.pack_price : p.price, p.quantity, p.remaining_quantity, p.notes || ''].map(csvCell).join(','));
+    });
+    state.loosePurchases.forEach((p) => {
+      const b = brandById(p.brand_id);
+      lines.push(['loose_purchase', p.date, p.time || '', b ? b.name : '', p.total_price, p.quantity, '', p.notes || ''].map(csvCell).join(','));
     });
     download('cig-diary-' + todayStr() + '.csv', lines.join('\n'), 'text/csv');
     toast('CSV exported');
@@ -1890,9 +2086,11 @@ function viewQuickAdd() {
       await DB.clear(DB.STORES.brands);
       await DB.clear(DB.STORES.cigarettes);
       await DB.clear(DB.STORES.packs);
+      await DB.clear(DB.STORES.loose_purchases);
       await DB.bulkPut(DB.STORES.brands, data.brands || []);
       await DB.bulkPut(DB.STORES.cigarettes, data.cigarettes || []);
       await DB.bulkPut(DB.STORES.packs, data.packs || []);
+      await DB.bulkPut(DB.STORES.loose_purchases, data.loose_purchases || []);
       if (data.settings) { Object.assign(settings, data.settings); saveSettings(); applyTheme(); }
       await loadData();
       toast('Backup imported');
@@ -1910,6 +2108,7 @@ function viewQuickAdd() {
     if (!ok) return;
     await DB.clear(DB.STORES.cigarettes);
     await DB.clear(DB.STORES.packs);
+    await DB.clear(DB.STORES.loose_purchases);
     await loadData();
     toast('History cleared');
     location.hash = '#/home';
@@ -1929,6 +2128,8 @@ function viewQuickAdd() {
         '<div class="so-icon">&#128684;</div><div><div class="so-t">Add Cigarette</div><div class="so-s">Full form with photo and notes</div></div></button>' +
       '<button class="sheet-option" data-sheet-go="#/add-pack">' +
         '<div class="so-icon">&#128230;</div><div><div class="so-t">Add Whole Pack</div><div class="so-s">Record a purchased pack</div></div></button>' +
+      '<button class="sheet-option" data-sheet-go="#/add-loose">' +
+        '<div class="so-icon">&#128722;</div><div><div class="so-t">Buy Loose Cigarettes</div><div class="so-s">Buy 2 or more without a whole pack</div></div></button>' +
       '<button class="sheet-option" data-sheet-go="#/add-brand">' +
         '<div class="so-icon">&#10133;</div><div><div class="so-t">Create New Brand</div><div class="so-s">New brand container</div></div></button>';
     overlay.classList.remove('hidden');
@@ -1973,6 +2174,9 @@ function viewQuickAdd() {
       const addPack = e.target.closest('[data-add-pack]');
       if (addPack) { location.hash = '#/add-pack?brand=' + addPack.getAttribute('data-add-pack'); return; }
 
+      const addLoose = e.target.closest('[data-add-loose]');
+      if (addLoose) { location.hash = '#/add-loose?brand=' + addLoose.getAttribute('data-add-loose'); return; }
+
       const editBrand = e.target.closest('[data-edit-brand]');
       if (editBrand) { location.hash = '#/add-brand?edit=' + editBrand.getAttribute('data-edit-brand'); return; }
 
@@ -1981,6 +2185,9 @@ function viewQuickAdd() {
 
       const editPack = e.target.closest('[data-edit-pack]');
       if (editPack) { location.hash = '#/add-pack?edit=' + editPack.getAttribute('data-edit-pack'); return; }
+
+      const editLoose = e.target.closest('[data-edit-loose]');
+      if (editLoose) { location.hash = '#/add-loose?edit=' + editLoose.getAttribute('data-edit-loose'); return; }
 
       const lightbox = e.target.closest('[data-lightbox]');
       if (lightbox) { openLightbox(lightbox.getAttribute('data-lightbox')); return; }
@@ -2013,6 +2220,17 @@ function viewQuickAdd() {
         await DB.remove(DB.STORES.packs, id);
         state.packs = state.packs.filter((p) => p.id !== id);
         toast('Pack deleted');
+        render();
+      }
+
+      const delLoose = e.target.closest('[data-del-loose]');
+      if (delLoose) {
+        const id = delLoose.getAttribute('data-del-loose');
+        const ok = await confirmAction('Delete this loose purchase?', 'Delete');
+        if (!ok) return;
+        await DB.remove(DB.STORES.loose_purchases, id);
+        state.loosePurchases = state.loosePurchases.filter((p) => p.id !== id);
+        toast('Loose purchase deleted');
         render();
       }
     });
